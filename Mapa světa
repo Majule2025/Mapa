@@ -2,69 +2,154 @@
 <html lang="cs">
 <head>
   <meta charset="utf-8" />
-  <title>Moje interaktivní mapa</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interaktivní mapa světa (Leaflet)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- Leaflet CSS -->
-  https://unpkg.com/leaflet@1.9.4/dist/leaflet.css
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-sA+e2at3bL1jGg9Qp+J1b7i9KQ3lGk9wQ74J6Gm3C6w="
+    crossorigin=""
+  />
   <style>
     html, body { height: 100%; margin: 0; }
     #map { height: 100vh; }
     .legend {
-      background: white; padding: 8px 10px; line-height: 1.4; border-radius: 4px;
+      background: #fff; padding: 8px 10px; border-radius: 4px;
       box-shadow: 0 0 8px rgba(0,0,0,.15); font: 14px/1.4 system-ui, Segoe UI, Arial, sans-serif;
     }
+    .leaflet-container { font: 14px/1.4 system-ui, Segoe UI, Arial, sans-serif; }
+    /* Volitelně: viditelný focus pro klávesnici */
+    .leaflet-interactive:focus { outline: 2px solid #222; }
   </style>
 </head>
 <body>
-  <div id="map"></div>
+  <div id="map" role="region" aria-label="Interaktivní mapa světa"></div>
 
   <!-- Leaflet JS -->
-  https://unpkg.com/leaflet@1.9.4/dist/leaflet.js</script>
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-o9N1j7kGStGv1bA1JQ1bE0n2t1YgF1ZLr52lfv4l0w8="
+    crossorigin=""
+  ></script>
 
   <script>
-    // 1) Inicializace mapy
-    const map = L.map('map').setView([49.8, 15.5], 7); // ČR
+    // --- 0) Vaše nastavení ---
+    const POPISY = {
+      "CZE": "Tady je můj vlastní text pro Česko. Můžu sem dát libovolný obsah, odkazy apod.",
+      "SVK": "Text pro Slovensko.",
+      "DEU": "Text pro Německo.",
+      "USA": "Váš text pro USA."
+    };
 
-    // 2) Podkladová vrstva (OpenStreetMap)
+    const BARVY = {
+      "CZE": "#1f77b4",
+      "SVK": "#2ca02c",
+      "DEU": "#d62728",
+      "USA": "#9467bd"
+    };
+
+    const DEFAULT_FILL = "#e0e0e0";
+    const HOVER_OUTLINE = "#222";
+
+    // --- 1) Inicializace mapy ---
+    const map = L.map('map', {
+      minZoom: 2,
+      worldCopyJump: true,
+      attributionControl: true
+    }).setView([20, 0], 2);
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap přispěvatelé'
     }).addTo(map);
 
-    // 3) Ukázkový GeoJSON (bod + popup)
-    const mojeData = {
-      "type": "FeatureCollection",
-      "features": [
-        {
-          "type": "Feature",
-          "properties": { "název": "Moje místo", "poznámka": "Klikni pro detail" },
-          "geometry": { "type": "Point", "coordinates": [14.914, 50.411] } // Mladá Boleslav
+    // --- 2) Načtení hranic států ---
+    const WORLD_GEOJSON_URL = "https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json";
+
+    fetch(WORLD_GEOJSON_URL)
+      .then(r => r.json())
+      .then(data => {
+        // OPRAVA: zohlednit feature.id (ISO3) + případné properties.* varianty
+        function getISO3(feature) {
+          if (!feature) return null;
+          if (feature.id && typeof feature.id === 'string') return feature.id; // <- nejdůležitější pro tento dataset
+          const props = feature.properties || {};
+          return props.iso_a3 || props.ISO_A3 || props.iso3 || props.adm0_a3 || props.name_long_iso3 || null;
         }
-      ]
-    };
 
-    function onEachFeature(feature, layer) {
-      if (feature.properties) {
-        const { název, poznámka } = feature.properties;
-        layer.bindPopup(`<strong>${název ?? ''}</strong><br>${poznámka ?? ''}`);
-      }
-    }
+        const layer = L.geoJSON(data, {
+          style: feature => {
+            const iso3 = getISO3(feature);
+            const fill = (iso3 && BARVY[iso3]) ? BARVY[iso3] : DEFAULT_FILL;
+            return {
+              color: "#777",
+              weight: 0.8,
+              fillColor: fill,
+              fillOpacity: 0.85
+            };
+          },
+          onEachFeature: (feature, lyr) => {
+            const props = feature.properties || {};
+            const name = props.name || props.NAME || "Neznámý stát";
+            const iso3 = getISO3(feature);
 
-    L.geoJSON(mojeData, {
-      pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
-        radius: 8, fillColor: '#0078d4', color: '#004a8f', weight: 2, opacity: 1, fillOpacity: 0.8
-      }),
-      onEachFeature
-    }).addTo(map);
+            // Tooltip na hover (název státu)
+            lyr.bindTooltip(name, { sticky: true, direction: 'auto' });
 
-    // 4) Jednoduchá legenda
-    const legend = L.control({position: 'bottomright'});
+            // Popup na klik s vlastním textem
+            const vlastniText = (iso3 && POPISY[iso3]) ? POPISY[iso3] : `Stát: ${name}`;
+            lyr.on('click', () => {
+              lyr.bindPopup(`<strong>${name}</strong><br>${vlastniText}`, { maxWidth: 320 }).openPopup();
+            });
+
+            // Hover efekt – zvýraznění obrysu
+            lyr.on('mouseover', () => {
+              lyr.setStyle({ weight: 2, color: HOVER_OUTLINE });
+            });
+            lyr.on('mouseout', () => {
+              lyr.setStyle({ weight: 0.8, color: "#777" });
+            });
+
+            // Přístupnost (klávesnice): přidáme tabindex po přidání do mapy
+            lyr.on('add', () => {
+              const el = lyr.getElement && lyr.getElement();
+              if (el) {
+                el.setAttribute('tabindex', '0');
+                el.setAttribute('role', 'button');
+                el.setAttribute('aria-label', name);
+                el.addEventListener('keydown', (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    lyr.fire('click');
+                  }
+                });
+              }
+            });
+          }
+        }).addTo(map);
+
+        try { map.fitBounds(layer.getBounds(), { padding: [10, 10] }); } catch (e) {}
+      })
+      .catch(err => {
+        console.error("Chyba při načítání GeoJSON:", err);
+        alert("Nepodařilo se načíst hranice států. Zkuste později nebo uložte geojson lokálně vedle HTML a použijte relativní cestu.");
+      });
+
+    // --- 3) Legenda (volitelné) ---
+    const legend = L.control({ position: 'bottomright' });
     legend.onAdd = function() {
       const div = L.DomUtil.create('div', 'legend');
-      div.innerHTML = '<b>Legenda</b><br><span style="color:#0078d4">●</span> Můj bod';
+      div.innerHTML = `
+        <b>Legenda</b><br>
+        <span style="color:${BARVY.CZE || '#000'}">■</span> Česko<br>
+        <span style="color:${BARVY.SVK || '#000'}">■</span> Slovensko<br>
+        <span style="color:${BARVY.DEU || '#000'}">■</span> Německo<br>
+        <span style="color:${BARVY.USA || '#000'}">■</span> USA
+      `;
       return div;
     };
     legend.addTo(map);
   </script>
 </body>
 </html>
+``
